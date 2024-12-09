@@ -1,3 +1,4 @@
+import cv2
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from model import Model
@@ -18,6 +19,9 @@ load_dotenv()
 TIME_WINDOW = 3 
 DETECTION_THRESHOLD = 10  
 ALERT_COOLDOWN = 10  
+recording = False
+video_writer = None
+clip_start_time = None
 
 detection_times = deque()
 last_alert_time = 0
@@ -48,6 +52,43 @@ async def send_email_alert(subject, text, to):
             logger.error(f"Failed to send email: {response.text}")
         else:
             logger.info("Email sent successfully")
+
+recording_states = {}
+
+def save_video_clip(label, image_np):
+    """Save a 10-second video clip for a specific label."""
+    global recording_states
+                    
+                    # Ensure the label exists in the recording states dictionary
+    if label not in recording_states:
+        recording_states[label] = {"recording": False, "start_time": None, "video_writer": None}
+
+        current_state = recording_states[label]
+
+        if not current_state["recording"]:
+                        # Start recording
+            clip_filename = f"processed_data/{label}_clip.avi"
+            current_state["video_writer"] = cv2.VideoWriter(
+                clip_filename,
+                cv2.VideoWriter_fourcc(*'XVID'),
+                10,  # FPS
+                (image_np.shape[1], image_np.shape[0])  # Frame dimensions
+                )
+            current_state["recording"] = True
+            current_state["start_time"] = time.time()
+            logger.info(f"Started recording for {label}: {clip_filename}")
+        else:
+                        # Continue recording
+            elapsed_time = time.time() - current_state["start_time"]
+            if elapsed_time < 10:  # Recording duration in seconds
+                    current_state["video_writer"].write(image_np)
+            else:
+                            # Stop recording after 10 seconds
+                current_state["video_writer"].release()
+                current_state["video_writer"] = None
+                current_state["recording"] = False
+                current_state["start_time"] = None
+                logger.info(f"Recording for {label} completed and saved.")
 
 
 logging.basicConfig(level=logging.INFO)
@@ -146,6 +187,13 @@ async def predict_image(
             except Exception as e:
                 logger.error(f"Failed to send email : {e}")
                 raise HTTPException(status_code=500, detail="Failed to send email")
+            
+            try:
+                if label_to_display in ['fight on a street','fire on a street','street violence','car crash','violence in office','fire in office','car on fire']:
+                    save_video_clip(label_to_display, image_np)
+            except Exception as e:
+                logger.error("Error saving video")
 
 
     return {"predicted_label": label_to_display, "alert_message": alert_message}
+   
