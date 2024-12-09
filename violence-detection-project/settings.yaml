@@ -1,0 +1,39 @@
+model-settings:
+  prediction-threshold: 0.23  # max value of cosine similarity can be 1
+  model-name: 'ViT-B/32'
+  device: 'cpu'
+label-settings:
+  labels: 
+    # outdoor cases
+    - 'people walking on a street'
+    - 'buildings'
+    - 'fight on a street'
+    - 'fire on a street'
+    - 'car on fire'
+    - 'street violence'
+    - 'road'
+    - 'gun'
+    - 'knife'
+    - 'car crash'
+    - 'cars on a road'
+    - 'car parking area'
+    - 'cars'
+    # indoor cases
+    - 'office environment'
+    - 'office corridor'
+    - 'violence in office'
+    - 'fire in office'
+    - 'gun'
+    - 'knife'
+    - 'people talking'
+    - 'people walking in office'
+    - 'person sitting in office'
+    - 'people sitting in office'
+    - 'people talking in office'
+    - 'people standing in office'
+    - 'people standing'
+    - 'person standing'
+    - 'person sitting'
+    - 'group of people'
+  default-label: 'Unknown' 
+
