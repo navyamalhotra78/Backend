@@ -170,8 +170,8 @@ async def predict_image(
             try:
                 message = client.messages.create(
                     body=alert_message,
-                    to='+919880923876',  # Your phone number
-                    from_='+17753306947'  # Your Twilio phone number
+                    to=os.getenv("TWILIO_TO"),  # Your phone number
+                    from_=os.getenv("TWILIO_FROM")  # Your Twilio phone number
                 )
                 logger.info(f"Twilio message sent with SID: {message.sid}")
             except Exception as e:
