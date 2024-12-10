@@ -40,56 +40,91 @@ def check_for_alert(detection_times, last_alert_time,label):
     
     return last_alert_time
 
-async def send_email_alert(subject, text, to):
+
+recording_states = {}
+
+async def send_email_alert(subject, text, to, video_file_name):
+    """Function to send the email alert with the video."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    video_path = os.path.join(base_dir, "processed_data", f"{video_file_name}_clip.avi")
     email_data = {
         "subject": subject,
         "text": text,
         "to": to
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.post("http://localhost:3000/send-email", json=email_data)
-        if response.status_code != 200:
-            logger.error(f"Failed to send email: {response.text}")
-        else:
-            logger.info("Email sent successfully")
+    
+    # Open video file in binary mode
+    with open(video_path, 'rb') as video_file:
+        files = {
+            'attachment': (f"{video_file_name}.avi", video_file, 'video/avi')
+        }
+        logger.info(f"Sending email alert with payload: {email_data}, files: {files}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "http://localhost:3000/send-email", 
+                data=email_data,
+                files=files
+            )
+            response.raise_for_status()
+            if response.status_code != 200:
+                logger.error(f"Failed to send email: {response.text}")
+            else:
+                logger.info("Email sent successfully")
 
 recording_states = {}
 
-def save_video_clip(label, image_np):
-    """Save a 10-second video clip for a specific label."""
+def save_video_clip(label, image_np, callback=None):
     global recording_states
-                    
-                    # Ensure the label exists in the recording states dictionary
+
     if label not in recording_states:
-        recording_states[label] = {"recording": False, "start_time": None, "video_writer": None}
+        recording_states[label] = {
+            "recording": False,
+            "start_time": None,
+            "video_writer": None,
+            "frame_count": 0,
+        }
 
-        current_state = recording_states[label]
+    current_state = recording_states[label]
 
-        if not current_state["recording"]:
-                        # Start recording
-            clip_filename = f"processed_data/{label}_clip.avi"
-            current_state["video_writer"] = cv2.VideoWriter(
-                clip_filename,
-                cv2.VideoWriter_fourcc(*'XVID'),
-                10,  # FPS
-                (image_np.shape[1], image_np.shape[0])  # Frame dimensions
-                )
-            current_state["recording"] = True
-            current_state["start_time"] = time.time()
-            logger.info(f"Started recording for {label}: {clip_filename}")
-        else:
-                        # Continue recording
-            elapsed_time = time.time() - current_state["start_time"]
-            if elapsed_time < 10:  # Recording duration in seconds
-                    current_state["video_writer"].write(image_np)
-            else:
-                            # Stop recording after 10 seconds
-                current_state["video_writer"].release()
-                current_state["video_writer"] = None
-                current_state["recording"] = False
-                current_state["start_time"] = None
-                logger.info(f"Recording for {label} completed and saved.")
+    # Start recording if not already recording
+    if not current_state["recording"]:
+        clip_filename = f"processed_data/{label}_clip.avi"
+        print(f"Initializing VideoWriter for {label}...")
+        current_state["video_writer"] = cv2.VideoWriter(
+            clip_filename,
+            cv2.VideoWriter_fourcc(*'MJPG'),
+            10,  # FPS
+            (image_np.shape[1], image_np.shape[0])  # Ensure this matches frame dimensions
+        )
+        if not current_state["video_writer"].isOpened():
+            print("Error: VideoWriter failed to open!")
+        current_state["recording"] = True
+        current_state["start_time"] = time.time()
+        current_state["frame_count"] = 0
+        print(f"Started recording for {label}: {clip_filename}")
 
+    # Write frames to the video
+    if current_state["recording"] and current_state["video_writer"]:
+        current_state["video_writer"].write(image_np)
+        current_state["frame_count"] += 1
+        elapsed_time = time.time() - current_state["start_time"]
+        print(f"Elapsed time for {label}: {elapsed_time:.2f} seconds")
+        print(f"Frame {current_state['frame_count']} written for {label}.")
+
+        # Stop recording if time exceeds 10 seconds
+        if elapsed_time >= 10:
+            print(f"Stopped recording for {label} after 10 seconds.")
+            current_state["video_writer"].release()
+            current_state["video_writer"] = None
+            current_state["recording"] = False
+            current_state["start_time"] = None
+            print(f"Video for {label} saved.")
+            if callback:
+                callback(label)
+
+        # Ensure recording lasts at least 5 seconds
+        elif elapsed_time < 5:
+            print(f"Recording for {label} is being actively recorded.")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -112,13 +147,13 @@ app.add_middleware(
 
 model = Model()
 
-@app.post("/predict/")
+@app.post("/predict/")  
 async def predict_image(
     file: UploadFile = File(...),
     latitude: float = Form(...),
     longitude: float = Form(...),
-    timestamp: str = Form(...),):
-
+    timestamp: str = Form(...),
+):
     last_alert_time = 0
     current_time = time.time()
     label_to_display = ""
@@ -170,8 +205,8 @@ async def predict_image(
             try:
                 message = client.messages.create(
                     body=alert_message,
-                    to=os.getenv("TWILIO_TO"),  # Your phone number
-                    from_=os.getenv("TWILIO_FROM")  # Your Twilio phone number
+                    to="+919880923876",  # Your phone number
+                    from_="+17753306947"  # Your Twilio phone number
                 )
                 logger.info(f"Twilio message sent with SID: {message.sid}")
             except Exception as e:
@@ -179,21 +214,21 @@ async def predict_image(
                 raise HTTPException(status_code=500, detail="Failed to send alert")
             
             try:
+                if label_to_display in ['fight on a street','fire on a street','street violence','car crash','violence in office','fire in office','car on fire']:
+                    save_video_clip(label_to_display, image_np, callback=lambda label: logger.info(f"Video for {label} saved"))
+                    time.sleep(10)  # You can adjust the sleep as per your needs
+            except Exception as e:
+                logger.error("Error saving video")
+            
+            try:
                 await send_email_alert(
-                subject=f"Alert: {label_to_display}",
-                text=alert_message,
-                to="navya0807@gmail.com"  # Replace with the recipient's email
+                    subject=f"Alert: {label_to_display}",
+                    text=alert_message,
+                    to="navya0807@gmail.com",
+                    video_file_name=label_to_display  
                 )
             except Exception as e:
                 logger.error(f"Failed to send email : {e}")
                 raise HTTPException(status_code=500, detail="Failed to send email")
-            
-            try:
-                if label_to_display in ['fight on a street','fire on a street','street violence','car crash','violence in office','fire in office','car on fire']:
-                    save_video_clip(label_to_display, image_np)
-            except Exception as e:
-                logger.error("Error saving video")
-
 
     return {"predicted_label": label_to_display, "alert_message": alert_message}
-   
