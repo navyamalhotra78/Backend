@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import yaml
 from PIL import Image
+import os
 
 class Model:
     def __init__(self, settings_path: str = './settings.yaml'):
@@ -16,6 +17,7 @@ class Model:
         self.threshold = self.settings['model-settings']['prediction-threshold']
         self.model, self.preprocess = clip.load(self.model_name, device=self.device)
         self.labels = self.settings['label-settings']['labels']
+
         self.labels_ = []
         for label in self.labels:
             text = 'a photo of ' + label  
@@ -23,6 +25,18 @@ class Model:
 
         self.text_features = self.vectorize_text(self.labels_)
         self.default_label = self.settings['label-settings']['default-label']
+
+        self.confidence_threshold = 0.5  # Example threshold
+        self.nms_threshold = 0.4        # Example NMS threshold
+        yolo_cfg = './YOLOV4-tiny/yolov4-tiny.cfg'       # Path to YOLO config file
+        yolo_weights = './YOLOV4-tiny/yolov4-tiny.weights'  # Path to YOLO weights file
+
+        # Ensure the paths exist
+        if not os.path.exists(yolo_cfg) or not os.path.exists(yolo_weights):
+            raise FileNotFoundError("YOLO configuration or weights file is missing.")
+
+        self.net = cv2.dnn.readNetFromDarknet(yolo_cfg, yolo_weights)
+        self.ln = self.net.getUnconnectedOutLayersNames()
 
     @torch.no_grad()
     def transform_image(self, image_batch: list):
@@ -54,13 +68,14 @@ class Model:
     def predict_batch(self, image_batch: list) -> list:
         # Transform the batch of images
         tf_images = self.transform_image(image_batch)
-        
+
         # Get image features for the batch
         image_features = self.model.encode_image(tf_images)
 
-        # Predict labels for the batch
         predictions = []
-        for image_feature in image_features:
+
+        for i, (image, image_feature) in enumerate(zip(image_batch, image_features)):
+            # Predict labels for the image
             values, indices = self.predict_(text_features=self.text_features, image_features=image_feature.unsqueeze(0))
             label_index = indices[0].cpu().item()
             label_text = self.default_label
@@ -69,9 +84,36 @@ class Model:
             if model_confidence >= self.threshold:
                 label_text = self.labels[label_index]
 
+            # Initialize YOLO for crowd counting
+            blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+            self.net.setInput(blob)
+            layer_outputs = self.net.forward(self.ln)
+
+            # Parse YOLO outputs
+            boxes, confidences, class_ids = [], [], []
+            for output in layer_outputs:
+                for detection in output:
+                    scores = detection[5:]
+                    class_id = np.argmax(scores)
+                    confidence = scores[class_id]
+
+                    if confidence > self.confidence_threshold and class_id == 0:  # Class ID 0 corresponds to 'person'
+                        box = detection[0:4] * np.array([image.shape[1], image.shape[0], image.shape[1], image.shape[0]])
+                        (center_x, center_y, width, height) = box.astype("int")
+                        x = int(center_x - (width / 2))
+                        y = int(center_y - (height / 2))
+                        boxes.append([x, y, int(width), int(height)])
+                        confidences.append(float(confidence))
+                        class_ids.append(class_id)
+
+            indices = cv2.dnn.NMSBoxes(boxes, confidences, self.confidence_threshold, self.nms_threshold)
+            crowd_count = len(indices)  # Count the number of detected humans
+
+            # Add prediction and crowd count to the results
             predictions.append({
                 'label': label_text,
-                'confidence': model_confidence
+                'confidence': model_confidence,
+                'crowd_count': crowd_count
             })
 
         return predictions

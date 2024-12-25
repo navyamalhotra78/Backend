@@ -171,6 +171,7 @@ async def predict_image(
     labels = model.predict_batch([image_np])
     for label_dict in labels:
         label = label_dict['label'].lower()
+        crowd_count=label_dict['crowd_count']
 
         if 'violence' or 'fight' in label:
             detection_times.append(current_time)
@@ -200,8 +201,7 @@ async def predict_image(
     alert_message = ""
     if label_to_display :
         if label_to_display in ['fight on a street','fire on a street','street violence','car crash','violence in office','fire in office','car on fire']:
-            alert_message = f"{label_to_display} alert triggered at {latitude},{longitude} at {timestamp}!"
-        
+            alert_message = f"{label_to_display} alert triggered at {latitude},{longitude} at {timestamp}, crowd count:{crowd_count}!"
             try:
                 message = client.messages.create(
                     body=alert_message,
@@ -231,4 +231,4 @@ async def predict_image(
                 logger.error(f"Failed to send email : {e}")
                 raise HTTPException(status_code=500, detail="Failed to send email")
 
-    return {"predicted_label": label_to_display, "alert_message": alert_message}
+    return {"predicted_label": label_to_display, "alert_message": alert_message,"crowd_count":crowd_count}
